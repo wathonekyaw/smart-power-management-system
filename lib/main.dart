@@ -92,7 +92,7 @@ class _PowerManagementHomePageState extends State<PowerManagementHomePage> {
       _addLog('Connected to $address');
 
       connection!.input!.listen((data) {
-        String received = utf8.decode(data).trim();
+        String received = utf8.decode(data, allowMalformed: true).trim();
         _addLog('Received: $received');
         parseBluetoothData(received);
       }).onDone(() {
@@ -126,12 +126,16 @@ class _PowerManagementHomePageState extends State<PowerManagementHomePage> {
 
   void parseBluetoothData(String data) {
     try {
+      if (data.isEmpty) {
+        _addLog('Received empty data');
+        return;
+      }
       final parts = data.split(',');
       _addLog('Parsed parts: ${parts.length} parts');
       if (parts.length >= 8) {
         setState(() {
-          _currentPowerSource = parts[0];
-          _currentSourceStatus = parts[1];
+          _currentPowerSource = parts[0].isNotEmpty ? parts[0] : 'None';
+          _currentSourceStatus = parts[1].isNotEmpty ? parts[1] : 'No Power Source';
           _batteryLevel = double.tryParse(parts[2]) ?? 0;
           _lampHighOn = parts[3] == '1';
           _lampNormalOn = parts[4] == '1';
@@ -152,8 +156,29 @@ class _PowerManagementHomePageState extends State<PowerManagementHomePage> {
       String commandString = '$lamp:${value ? 1 : 0}\n';
       _addLog('Sending: $commandString');
       connection!.output.add(utf8.encode(commandString));
+
+      // Update the manual override state
+      setState(() {
+        if (lamp == 'high') _manualOverrideHigh = value;
+        if (lamp == 'normal') _manualOverrideNormal = value;
+        if (lamp == 'low') _manualOverrideLow = value;
+      });
     } else {
       _addLog('Cannot send command: not connected');
+    }
+  }
+
+  void resetOverrides() {
+    if (connection != null && connection!.isConnected) {
+      String commandString = 'reset\n';
+      _addLog('Sending: $commandString');
+      connection!.output.add(utf8.encode(commandString));
+
+      setState(() {
+        _manualOverrideHigh = false;
+        _manualOverrideNormal = false;
+        _manualOverrideLow = false;
+      });
     }
   }
 
@@ -288,7 +313,7 @@ class _PowerManagementHomePageState extends State<PowerManagementHomePage> {
             Row(
               children: [
                 Text(
-                  'Manual Override',
+                  'Manual',
                   style: TextStyle(
                     fontSize: 12,
                     color: manualOverride ? Colors.blue : Colors.grey[600],
@@ -297,9 +322,7 @@ class _PowerManagementHomePageState extends State<PowerManagementHomePage> {
                 Switch(
                   value: manualOverride,
                   onChanged: (value) {
-                    setState(() {
-                      setManualOverride(value);
-                    });
+                    setManualOverride(value);
                     sendLampCommand(label.toLowerCase(), value);
                   },
                   activeColor: Colors.blue,
@@ -326,11 +349,11 @@ class _PowerManagementHomePageState extends State<PowerManagementHomePage> {
             height: 200,
             padding: const EdgeInsets.all(10),
             child: ListView.builder(
-              reverse: true, // Show newest logs at the top
+              reverse: true,
               itemCount: _debugLogs.length,
               itemBuilder: (context, index) {
                 return Text(
-                  _debugLogs[_debugLogs.length - 1 - index], // Reverse order
+                  _debugLogs[_debugLogs.length - 1 - index],
                   style: const TextStyle(fontSize: 12, fontFamily: 'Courier'),
                 );
               },
@@ -390,18 +413,28 @@ class _PowerManagementHomePageState extends State<PowerManagementHomePage> {
               ),
             ],
           ),
-          IconButton(
-            icon: const Icon(Icons.bluetooth_searching, color: Colors.white),
-            onPressed: () async {
-              final address = await Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (context) => BluetoothConnectionPage(connectedAddress: connectedAddress),
+          Row(
+            children: [
+              if (_manualOverrideHigh || _manualOverrideNormal || _manualOverrideLow)
+                IconButton(
+                  icon: const Icon(Icons.settings_backup_restore, color: Colors.white),
+                  onPressed: resetOverrides,
+                  tooltip: 'Reset Overrides',
                 ),
-              );
-              if (address != null) {
-                connectToBluetooth(address);
-              }
-            },
+              IconButton(
+                icon: const Icon(Icons.bluetooth_searching, color: Colors.white),
+                onPressed: () async {
+                  final address = await Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (context) => BluetoothConnectionPage(connectedAddress: connectedAddress),
+                    ),
+                  );
+                  if (address != null) {
+                    connectToBluetooth(address);
+                  }
+                },
+              ),
+            ],
           ),
         ],
       ),
