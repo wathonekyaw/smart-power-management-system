@@ -6,7 +6,7 @@ import 'package:flutter_bluetooth_serial_plus/flutter_bluetooth_serial_plus.dart
 import 'bluetooth_connection_page.dart';
 
 void main() {
-  runApp(PowerManagementApp());
+  runApp(const PowerManagementApp());
 }
 
 class PowerManagementApp extends StatelessWidget {
@@ -21,7 +21,7 @@ class PowerManagementApp extends StatelessWidget {
         scaffoldBackgroundColor: const Color(0xFFF0F2F5),
         fontFamily: 'Roboto',
       ),
-      home: PowerManagementHomePage(),
+      home: const PowerManagementHomePage(),
       debugShowCheckedModeBanner: false,
     );
   }
@@ -37,15 +37,17 @@ class PowerManagementHomePage extends StatefulWidget {
 class _PowerManagementHomePageState extends State<PowerManagementHomePage> {
   // Bluetooth
   BluetoothConnection? connection;
-  bool isConnecting = true;
+  bool isConnecting = false;
   bool isConnected = false;
   String? connectedAddress;
   Timer? reconnectTimer;
 
   // Power info
   String _currentPowerSource = 'None';
-  String _currentSourceStatus = 'No Power Source Available';
+  String _currentSourceStatus = 'No Power Source';
   double _batteryLevel = 0;
+  bool _solarAvailable = false;
+  bool _gridAvailable = false;
 
   // Lamp states
   bool _lampHighOn = false;
@@ -57,22 +59,28 @@ class _PowerManagementHomePageState extends State<PowerManagementHomePage> {
   bool _manualOverrideNormal = false;
   bool _manualOverrideLow = false;
 
-  // Power sensors
-  bool _solarOn = false;
-  bool _gridOn = false;
-  bool _batteryOn = false;
-
+  // Debug logs
+  List<String> _debugLogs = [];
   Timer? _uiTimer;
 
   @override
   void initState() {
     super.initState();
-    // No initial connection. User must press the button.
     _uiTimer = Timer.periodic(const Duration(seconds: 1), (_) => setState(() {}));
+    _addLog('App initialized');
+  }
+
+  void _addLog(String message) {
+    setState(() {
+      final timestamp = DateTime.now().toIso8601String().substring(11, 19);
+      _debugLogs.add('[$timestamp] $message');
+      if (_debugLogs.length > 100) _debugLogs.removeAt(0); // Limit to 100 logs
+    });
   }
 
   void connectToBluetooth(String address) async {
     try {
+      _addLog('Connecting to $address');
       setState(() => isConnecting = true);
       BluetoothConnection connectionResult = await BluetoothConnection.toAddress(address);
       connection = connectionResult;
@@ -81,18 +89,19 @@ class _PowerManagementHomePageState extends State<PowerManagementHomePage> {
         isConnecting = false;
         isConnected = true;
       });
+      _addLog('Connected to $address');
 
-      connection!.input!
-          .listen((data) {
-            String received = utf8.decode(data).trim();
-            parseBluetoothData(received);
-          })
-          .onDone(() {
-            setState(() => isConnected = false);
-            attemptReconnect();
-          });
+      connection!.input!.listen((data) {
+        String received = utf8.decode(data).trim();
+        _addLog('Received: $received');
+        parseBluetoothData(received);
+      }).onDone(() {
+        _addLog('Bluetooth connection closed');
+        setState(() => isConnected = false);
+        attemptReconnect();
+      });
     } catch (e) {
-      print('Cannot connect: $e');
+      _addLog('Cannot connect: $e');
       setState(() {
         isConnecting = false;
         isConnected = false;
@@ -107,6 +116,7 @@ class _PowerManagementHomePageState extends State<PowerManagementHomePage> {
 
     reconnectTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
       if (!isConnected) {
+        _addLog('Attempting to reconnect to $connectedAddress');
         connectToBluetooth(connectedAddress!);
       } else {
         timer.cancel();
@@ -117,7 +127,8 @@ class _PowerManagementHomePageState extends State<PowerManagementHomePage> {
   void parseBluetoothData(String data) {
     try {
       final parts = data.split(',');
-      if (parts.length >= 6) {
+      _addLog('Parsed parts: ${parts.length} parts');
+      if (parts.length >= 8) {
         setState(() {
           _currentPowerSource = parts[0];
           _currentSourceStatus = parts[1];
@@ -125,41 +136,44 @@ class _PowerManagementHomePageState extends State<PowerManagementHomePage> {
           _lampHighOn = parts[3] == '1';
           _lampNormalOn = parts[4] == '1';
           _lampLowOn = parts[5] == '1';
-          _solarOn = _currentPowerSource == 'Solar';
-          _gridOn = _currentPowerSource == 'Grid';
-          _batteryOn = _currentPowerSource == 'Battery';
+          _solarAvailable = parts[6] == '1';
+          _gridAvailable = parts[7] == '1';
         });
+      } else {
+        _addLog('Invalid Bluetooth data: too few parts ($data)');
       }
     } catch (e) {
-      print('Parse error: $e');
+      _addLog('Parse error: $e');
     }
   }
 
   void sendLampCommand(String lamp, bool value) {
     if (connection != null && connection!.isConnected) {
       String commandString = '$lamp:${value ? 1 : 0}\n';
-      print('Sending: $commandString'); // Optional: Add a print statement for debugging
+      _addLog('Sending: $commandString');
       connection!.output.add(utf8.encode(commandString));
+    } else {
+      _addLog('Cannot send command: not connected');
     }
   }
 
-  Widget _buildPowerSourceCard(String label, IconData icon, bool status) {
+  Widget _buildPowerSourceCard(String label, IconData icon, bool isAvailable, bool isActive) {
     return Expanded(
       child: Card(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
         elevation: 5,
-        color: status ? const Color(0xFF4CAF50) : const Color(0xFFE0E0E0),
+        color: isActive ? const Color(0xFF2196F3) : (isAvailable ? const Color(0xFF4CAF50) : const Color(0xFFE0E0E0)),
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 20),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, color: status ? Colors.white : Colors.grey[700], size: 30),
+              Icon(icon, color: isActive || isAvailable ? Colors.white : Colors.grey[700], size: 30),
               const SizedBox(height: 8),
               Text(
                 label,
                 style: TextStyle(
-                  color: status ? Colors.white : Colors.grey[700],
+                  color: isActive || isAvailable ? Colors.white : Colors.grey[700],
                   fontWeight: FontWeight.bold,
                   fontSize: 14,
                 ),
@@ -207,7 +221,7 @@ class _PowerManagementHomePageState extends State<PowerManagementHomePage> {
             Align(
               alignment: Alignment.centerRight,
               child: Text(
-                '${_batteryLevel.toStringAsFixed(0)}%',
+                _currentPowerSource == 'Battery' ? _currentSourceStatus : '${_batteryLevel.toStringAsFixed(0)}%',
                 style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
               ),
             ),
@@ -235,24 +249,19 @@ class _PowerManagementHomePageState extends State<PowerManagementHomePage> {
             _buildStatusRow('Source Status', _currentSourceStatus, Icons.info_outline),
             _buildStatusRow(
               'Lamps',
-              'High: $_lampHighOn, Normal: $_lampNormalOn, Low: $_lampLowOn',
+              'High: ${_lampHighOn ? 'ON' : 'OFF'}, Normal: ${_lampNormalOn ? 'ON' : 'OFF'}, Low: ${_lampLowOn ? 'ON' : 'OFF'}',
               Icons.lightbulb_outline,
             ),
+            _buildStatusRow('Solar Available', _solarAvailable ? 'Yes' : 'No', Icons.wb_sunny),
+            _buildStatusRow('Grid Available', _gridAvailable ? 'Yes' : 'No', Icons.electrical_services),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildLampCard(
-    String label,
-    IconData icon,
-    bool isSystemOn,
-    bool manualOverride,
-    ValueChanged<bool> onChanged,
-      Function(bool) setManualOverride,
-  ) {
-    bool isLampOn = manualOverride || isSystemOn;
+  Widget _buildLampCard(String label, IconData icon, bool isSystemOn, bool manualOverride, Function(bool) setManualOverride) {
+    bool isLampOn = manualOverride && isSystemOn;
     return Card(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
       elevation: isLampOn ? 8 : 5,
@@ -289,9 +298,6 @@ class _PowerManagementHomePageState extends State<PowerManagementHomePage> {
                   value: manualOverride,
                   onChanged: (value) {
                     setState(() {
-                      // onChanged(value);
-                      // sendLampCommand(label.toUpperCase(), value);
-
                       setManualOverride(value);
                     });
                     sendLampCommand(label.toLowerCase(), value);
@@ -302,6 +308,35 @@ class _PowerManagementHomePageState extends State<PowerManagementHomePage> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildDebugLogCard() {
+    return Card(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+      elevation: 5,
+      child: ExpansionTile(
+        title: const Text(
+          'Debug Logs',
+          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+        ),
+        children: [
+          Container(
+            height: 200,
+            padding: const EdgeInsets.all(10),
+            child: ListView.builder(
+              reverse: true, // Show newest logs at the top
+              itemCount: _debugLogs.length,
+              itemBuilder: (context, index) {
+                return Text(
+                  _debugLogs[_debugLogs.length - 1 - index], // Reverse order
+                  style: const TextStyle(fontSize: 12, fontFamily: 'Courier'),
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -330,14 +365,9 @@ class _PowerManagementHomePageState extends State<PowerManagementHomePage> {
   }
 
   Widget _buildConnectionBar() {
-    Color color =
-        isConnected ? Colors.green[400]! : (isConnecting ? Colors.orange[400]! : Colors.red[400]!);
-    String statusText =
-        isConnected ? 'Connected' : (isConnecting ? 'Connecting...' : 'Disconnected');
-    IconData icon =
-        isConnected
-            ? Icons.bluetooth_connected
-            : (isConnecting ? Icons.bluetooth : Icons.bluetooth_disabled);
+    Color color = isConnected ? Colors.green[400]! : (isConnecting ? Colors.orange[400]! : Colors.red[400]!);
+    String statusText = isConnected ? 'Connected' : (isConnecting ? 'Connecting...' : 'Disconnected');
+    IconData icon = isConnected ? Icons.bluetooth_connected : (isConnecting ? Icons.bluetooth : Icons.bluetooth_disabled);
 
     return Container(
       width: double.infinity,
@@ -361,7 +391,7 @@ class _PowerManagementHomePageState extends State<PowerManagementHomePage> {
             ],
           ),
           IconButton(
-            icon: Icon(Icons.bluetooth_searching, color: Colors.white),
+            icon: const Icon(Icons.bluetooth_searching, color: Colors.white),
             onPressed: () async {
               final address = await Navigator.of(context).push(
                 MaterialPageRoute(
@@ -390,8 +420,8 @@ class _PowerManagementHomePageState extends State<PowerManagementHomePage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Center(
-          child: const Text(
+        title: const Center(
+          child: Text(
             'Smart Power Management',
             style: TextStyle(fontWeight: FontWeight.bold),
           ),
@@ -412,11 +442,11 @@ class _PowerManagementHomePageState extends State<PowerManagementHomePage> {
                   _buildSectionHeader('Power Status'),
                   Row(
                     children: [
-                      _buildPowerSourceCard('Solar', Icons.wb_sunny, _solarOn),
+                      _buildPowerSourceCard('Solar', Icons.wb_sunny, _solarAvailable, _currentPowerSource == 'Solar'),
                       const SizedBox(width: 12),
-                      _buildPowerSourceCard('Grid', Icons.electrical_services, _gridOn),
+                      _buildPowerSourceCard('Grid', Icons.electrical_services, _gridAvailable, _currentPowerSource == 'Grid'),
                       const SizedBox(width: 12),
-                      _buildPowerSourceCard('Battery', Icons.battery_full, _batteryOn),
+                      _buildPowerSourceCard('Battery', Icons.battery_full, _currentPowerSource == 'Battery', _currentPowerSource == 'Battery'),
                     ],
                   ),
                   const SizedBox(height: 12),
@@ -427,9 +457,7 @@ class _PowerManagementHomePageState extends State<PowerManagementHomePage> {
                     Icons.lightbulb,
                     _lampHighOn,
                     _manualOverrideHigh,
-                    (v) {} ,
-
-                    (v) => _manualOverrideHigh = v,
+                        (v) => _manualOverrideHigh = v,
                   ),
                   const SizedBox(height: 12),
                   _buildLampCard(
@@ -437,8 +465,7 @@ class _PowerManagementHomePageState extends State<PowerManagementHomePage> {
                     Icons.lightbulb,
                     _lampNormalOn,
                     _manualOverrideNormal,
-                    (v) {},
-                    (v) => _manualOverrideNormal = v,
+                        (v) => _manualOverrideNormal = v,
                   ),
                   const SizedBox(height: 12),
                   _buildLampCard(
@@ -446,9 +473,11 @@ class _PowerManagementHomePageState extends State<PowerManagementHomePage> {
                     Icons.lightbulb,
                     _lampLowOn,
                     _manualOverrideLow,
-                    (v){},
-                    (v) => _manualOverrideLow = v,
+                        (v) => _manualOverrideLow = v,
                   ),
+                  const SizedBox(height: 20),
+                  _buildSectionHeader('Debug Logs'),
+                  _buildDebugLogCard(),
                   const SizedBox(height: 20),
                 ],
               ),
