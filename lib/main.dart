@@ -137,7 +137,9 @@ class _PowerManagementHomePageState extends State<PowerManagementHomePage> {
 
   void sendLampCommand(String lamp, bool value) {
     if (connection != null && connection!.isConnected) {
-      connection!.output.add(utf8.encode('$lamp:${value ? 1 : 0}\n'));
+      String commandString = '$lamp:${value ? 1 : 0}\n';
+      print('Sending: $commandString'); // Optional: Add a print statement for debugging
+      connection!.output.add(utf8.encode(commandString));
     }
   }
 
@@ -248,6 +250,7 @@ class _PowerManagementHomePageState extends State<PowerManagementHomePage> {
     bool isSystemOn,
     bool manualOverride,
     ValueChanged<bool> onChanged,
+      Function(bool) setManualOverride,
   ) {
     bool isLampOn = manualOverride || isSystemOn;
     return Card(
@@ -286,9 +289,12 @@ class _PowerManagementHomePageState extends State<PowerManagementHomePage> {
                   value: manualOverride,
                   onChanged: (value) {
                     setState(() {
-                      onChanged(value);
-                      sendLampCommand(label.toUpperCase(), value);
+                      // onChanged(value);
+                      // sendLampCommand(label.toUpperCase(), value);
+
+                      setManualOverride(value);
                     });
+                    sendLampCommand(label.toLowerCase(), value);
                   },
                   activeColor: Colors.blue,
                 ),
@@ -421,6 +427,8 @@ class _PowerManagementHomePageState extends State<PowerManagementHomePage> {
                     Icons.lightbulb,
                     _lampHighOn,
                     _manualOverrideHigh,
+                    (v) {} ,
+
                     (v) => _manualOverrideHigh = v,
                   ),
                   const SizedBox(height: 12),
@@ -429,6 +437,7 @@ class _PowerManagementHomePageState extends State<PowerManagementHomePage> {
                     Icons.lightbulb,
                     _lampNormalOn,
                     _manualOverrideNormal,
+                    (v) {},
                     (v) => _manualOverrideNormal = v,
                   ),
                   const SizedBox(height: 12),
@@ -437,6 +446,7 @@ class _PowerManagementHomePageState extends State<PowerManagementHomePage> {
                     Icons.lightbulb,
                     _lampLowOn,
                     _manualOverrideLow,
+                    (v){},
                     (v) => _manualOverrideLow = v,
                   ),
                   const SizedBox(height: 20),
